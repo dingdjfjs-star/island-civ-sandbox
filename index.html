@@ -1,0 +1,1543 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>孤岛文明沙盘</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: #12161d;
+    color: #c9d4e0;
+    font: 14px/1.6 "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+  }
+  main { display: flex; height: 100%; min-height: 0; }
+
+  /* 左侧大画布 */
+  #stage {
+    flex: 1; min-width: 0; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    padding: 14px; background: #0d1117;
+  }
+  #map {
+    max-width: 100%; max-height: 100%; width: auto; height: auto;
+    border: 1px solid #273140;
+    background: #0d293b;
+    image-rendering: pixelated;
+  }
+
+  /* 右侧 320px 侧栏：上部控制区 + 下部日志面板 */
+  aside {
+    flex: 0 0 320px; width: 320px; min-height: 0;
+    display: flex; flex-direction: column;
+    background: #181f28; border-left: 1px solid #273140;
+  }
+  .card { padding: 14px 16px; border-bottom: 1px solid #273140; }
+  .card.grow { flex: 1; min-height: 0; display: flex; flex-direction: column; border-bottom: none; padding-bottom: 10px; }
+  h1 { margin: 0 0 2px; font-size: 17px; font-weight: 600; letter-spacing: 3px; color: #e8eef5; }
+  .sub { color: #7f8ea0; font-size: 12px; margin-bottom: 10px; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  button {
+    background: #202a36; color: #c9d4e0;
+    border: 1px solid #334052; padding: 5px 14px;
+    font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: #4c5f78; color: #ffffff; }
+  button.primary { border-color: #a07a33; color: #e5c88a; }
+  button.primary:hover { border-color: #d8a657; }
+  select, input {
+    background: #141a22; color: #c9d4e0;
+    border: 1px solid #334052; padding: 4px 8px; font: inherit;
+  }
+  input#seed { width: 110px; }
+  .lbl { display: inline-flex; align-items: center; gap: 6px; color: #8fa0b4; font-size: 13px; }
+  .stat { margin: 2px 0 10px; color: #8fa0b4; font-size: 13px; }
+  .stat b { color: #e8eef5; font-weight: 600; }
+  .sep { margin: 0 8px; color: #334052; }
+  #legend, #roster { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  #roster { margin-top: 6px; max-height: 110px; overflow-y: auto; }
+  #roster .chip i { border-color: rgba(255,255,255,.38); }
+  .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #8fa0b4; }
+  .chip i { width: 12px; height: 12px; display: inline-block; border: 1px solid rgba(255,255,255,.14); }
+  .cap { font-size: 12px; color: #7f8ea0; letter-spacing: 2px; margin-bottom: 6px; }
+  #log { flex: 1; min-height: 0; overflow-y: auto; font-size: 12.5px; }
+  .logline { padding: 4px 0; border-bottom: 1px dashed #232d3a; color: #93a3b6; }
+  .logline b { color: #e5c88a; font-weight: 600; margin-right: 4px; }
+  .hint { color: #7f8ea0; font-size: 12px; }
+  .chip.dead { opacity: 0.45; }
+  #tip {
+    position: absolute; display: none; z-index: 5; pointer-events: none;
+    background: rgba(13,17,23,0.94); border: 1px solid #334052;
+    padding: 4px 9px; font-size: 12px; line-height: 1.6; color: #c9d4e0;
+    max-width: 460px;
+  }
+</style>
+</head>
+<body>
+<main>
+  <section id="stage"><canvas id="map"></canvas><div id="tip"></div></section>
+  <aside>
+    <div class="card">
+      <h1>孤岛文明沙盘</h1>
+      <div class="sub">部落演化实时推演：采集扩张 · 相遇冲突 · 迁徙分合（同种子同历史）</div>
+      <div class="row">
+        <button id="btnToggle" class="primary">开始</button>
+        <button id="btnReset">重置</button>
+        <label class="lbl">速度
+          <select id="speed" title="每秒推进的年数">
+            <option value="1">×1</option>
+            <option value="2">×2</option>
+            <option value="5" selected>×5</option>
+            <option value="20">×20</option>
+            <option value="60">×60</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label class="lbl">种子 <input id="seed" type="number" value="20261105"></label>
+        <span class="hint">同种子同历史</span>
+      </div>
+      <div class="stat">年份 <b id="year">1</b><span class="sep">·</span>部落 <b id="tribes">0</b><span class="sep">·</span>人口 <b id="pop">0</b><span class="sep">·</span>领地 <b id="terr">0</b> 格</div>
+      <div id="legend"></div>
+      <div id="roster"></div>
+    </div>
+    <div class="card grow">
+      <div class="cap">编年史</div>
+      <div id="log"></div>
+    </div>
+  </aside>
+</main>
+
+<!-- 模拟核心：纯逻辑，禁止一切 DOM API；test/probe.js 与 test/test.js 依赖下面两个标记抽核心 -->
+<script>
+/* ===== SIM-CORE-BEGIN ===== */
+/* 孤岛文明沙盘 · 模拟核心（纯逻辑）
+   纪律：禁止 document/window/canvas/requestAnimationFrame/localStorage 等一切 DOM API；
+   随机数只准用内部种子化 PRNG——同一 seed 两次运行，结果必须逐位一致。 */
+'use strict';
+
+/* ================= CONFIG：唯一参数中心（扁平对象，只准新增键，不准改名/删除） ================= */
+const CONFIG = {
+  seed: 20261105,        // 默认随机种子（createWorld 未传参时使用；UI 与探针的默认值同源）
+  mapW: 192,             // 地图宽度（瓦片列数）
+  mapH: 120,             // 地图高度（瓦片行数）
+  tilePx: 6,             // 单瓦片渲染像素（离屏地形图 = mapW*tilePx × mapH*tilePx）
+  startYear: 1,          // 世界起始年份（tick 每次推进一年）
+  eventsLimit: 400,      // 事件历史上限（world.events 超出后丢弃最旧事件）
+  landTarget: 0.30,      // 目标陆地占比（海平面按高度场分位数自适应标定，保证孤岛规模稳定）
+  seaLevelMin: 0.30,     // 自适应海平面下限钳制（防极端噪声场把海平面推得过低）
+  seaLevelMax: 0.70,     // 自适应海平面上限钳制
+  deepSeaDrop: 0.10,     // 海平面以下该深度内为浅海，更深为深海
+  beachRise: 0.02,       // 海平面以上该高度内为沙滩
+  plainRise: 0.08,       // 沙滩之上为平原带（带内湿度达 moistForestMin 处成森林）
+  forestRise: 0.13,      // 平原带之上为森林带（全为森林，密度随湿度）
+  mountainRise: 0.19,    // 森林带之上为山地，再高为雪峰
+  moistForestMin: 0.52,  // 平原带被判为森林所需的最低湿度
+  fbmOctaves: 5,         // 主地形 fbm 层数（4~5 层）
+  fbmBaseFreq: 3.2,      // 主地形噪声基础频率（以 mapH 为基准的全图周期数）
+  fbmLacunarity: 2.0,    // fbm 相邻层频率倍率
+  fbmGain: 0.5,          // fbm 相邻层振幅衰减率
+  warpOctaves: 3,        // 海岸线扰动噪声层数
+  warpFreq: 2.6,         // 海岸线扰动噪声频率
+  warpAmp: 0.08,         // 海岸线扰动幅度（对高度场的抬升/压低，让岸线不规则）
+  moistOctaves: 3,       // 湿度场 fbm 层数（第二组独立置换表的噪声）
+  moistFreq: 4.5,        // 湿度场噪声基础频率
+  reliefNoise: 0.70,     // 高度场合成：噪声项权重
+  reliefBase: 0.30,      // 高度场合成：噪声项抬升基线（把大陆架抬到海平面附近）
+  reliefMask: 0.55,      // 高度场合成：径向衰减项权重
+  maskFloor: 0.45,       // 高度场合成：径向项下限（保证地图边缘沉入海中）
+  noiseContrast: 1.5,    // 噪声对比度：围绕 0.5 拉伸噪声场，拉开峰谷（保证山地/雪峰在各种子下都出现）
+  // —— 资源丰度基准（生成时叠加逐瓦片随机抖动，幅度见 resJitter）——
+  foodBeach: 0.15,       // 沙滩：基础食物（滩涂拾取）
+  woodBeach: 0.03,       // 沙滩：基础木材
+  stoneBeach: 0.03,      // 沙滩：基础石料
+  foodPlain: 0.55,       // 平原：基础食物（主产食物）
+  woodPlain: 0.08,       // 平原：基础木材
+  stonePlain: 0.04,      // 平原：基础石料
+  foodForest: 0.30,      // 森林：基础食物（渔猎采集）
+  woodForest: 0.45,      // 森林：基础木材（另随森林密度上浮，密林最多 +0.5）
+  stoneForest: 0.04,     // 森林：基础石料
+  foodMountain: 0.03,    // 山地：基础食物
+  woodMountain: 0.02,    // 山地：基础木材
+  stoneMountain: 0.60,   // 山地：基础石料（主产石料）
+  foodSnow: 0.01,        // 雪峰：基础食物
+  woodSnow: 0.01,        // 雪峰：基础木材
+  stoneSnow: 0.15,       // 雪峰：基础石料
+  resJitter: 0.35,       // 资源随机抖动幅度（基准 × [1-j, 1+j]）
+
+  // —— 部落与生存（阶段二新增；只增不改）——
+  initialTribes: 4,      // 开局部落数量
+  popInitMin: 8,         // 初始人口下限（整数，含）
+  popInitMax: 15,        // 初始人口上限（整数，含）
+  initFoodYears: 2,      // 开局存粮 = 初始人口 × popEat × 此数（年）
+  tribeSpacingMin: 10,   // 初始据点间最小间距（切比雪夫距离，瓦片数；选址放不下时逐轮减半放宽）
+  siteScan: 3,           // 选址评分中"近水/近林"的扫描半径
+  siteWaterBonus: 2.5,   // 选址评分：扫描半径内有水域（深海/浅海）的加分
+  siteWoodBonus: 1.5,    // 选址评分：扫描半径内有森林的加分
+  initClaimRadius: 2,    // 建部时以据点为中心圈领地的最大半径
+  popPerTile: 2,         // 每人对应的领地瓦片数（领地目标 = 人口 × 此系数，人口增长驱动扩张）
+  claimPerYearMax: 4,    // 每年至多向外主张的新瓦片数
+  claimCatchFrac: 0.2,   // 领地缺口补齐速率：每年补领 缺口×此系数（向上取整，至少 1）
+  popEat: 1,             // 每人每年消耗的粮食（库存单位）
+  gatherMargin: 1.25,    // 年采集目标 = 口粮需求 × 此系数（盈余驱动增长与储备）
+  tileFoodYield: 8,      // 食物换算率：1.0 食物存量 × 肥力 → 每年最多采出的食物单位
+  tileWoodYield: 6,      // 木材换算率（附带采集折算库存单位用）
+  tileStoneYield: 4,     // 石料换算率（同上）
+  gatherWoodFrac: 0.06,  // 附带采集：每块领地每年采走木材存量的比例
+  gatherStoneFrac: 0.05, // 附带采集：每块领地每年采走石料存量的比例
+  overFrac: 0.45,        // 单瓦片轻采上限 = 存量可采出量 × 此比例（不伤地力）；超过则记过度采集（年末扣肥力）
+  fertHit: 0.05,         // 过度采集一次损失的肥力
+  fertHeal: 0.015,       // 未被过度采集的瓦片每年回复的肥力
+  regrowRate: 0.5,       // 资源再生：每年向初始丰度回复"缺口"的此比例（× 当前肥力，草长得快、地力好得慢）
+  fertCollapse: 0.35,    // 据点周边领地平均肥力低于此值 → 触发举族迁徙
+  fertCheckRadius: 4,    // 迁徙触发检查：据点周边考察半径（切比雪夫）
+  migrateRadius: 14,     // 迁徙寻地：新据点搜索半径（切比雪夫）
+  migrateFertMin: 0.6,   // 迁徙候选地自身的肥力下限（撂荒薄地不复用）
+  migrateClaimRadius: 10,// 迁徙落址后按人口需要圈领地的最大半径
+  stockCapFood: 300,     // 粮食库存上限
+  stockCapWood: 200,     // 木材库存上限
+  stockCapStone: 120,    // 石料库存上限
+  popGrowR: 0.05,        // 逻辑斯蒂增长率（本年有盈余且人口未达承载力时）
+  famineDeathFrac: 0.18, // 饥荒年减员比例 = 此值 ×（缺口/口粮需求）
+  famineGap: 6,          // 同一部落两次饥荒事件的最小间隔年数（防事件刷屏）
+  extinctPop: 1,         // 人口低于此值 → 部落消亡
+  stuckDecay: 0.06,      // 需要迁徙但无地可去时，每年额外人口衰减比例
+  tribeColorDist: 90,    // 部落配色与已用色的最小 RGB 距离（低于则跳过该候选色）
+
+  // —— 部落互动与分合（阶段三新增；只增不改）——
+  conflictBase: 0.05,        // 接壤部落每年开战的基础概率（实际 = 此值 × 拥挤度 × 实力差加成）
+  conflictEdgeCap: 2,        // 实力差加成上限：强/弱人口比达到此值后不再放大开战率
+  conflictDeathFrac: 0.10,   // 冲突年双方各损失的人口比例（占本族人口）
+  conflictLoserMult: 1.5,    // 败方（人口少的一方）损失在上式基础上的倍率（败方放血更重）
+  conflictFleeFrac: 0.8,     // 败方一战人口低于战前此比例 → 有 conflictFleeChance 概率被迫举族迁走
+  conflictFleeChance: 0.35,  // 满足被迫迁徙条件时，当年真的迁走的概率（留一半硬扛走向吞并）
+  mergePopFrac: 0.15,        // 冲突后败方人口 ≤ 胜方人口 × 此比例 → 据点陷落，举族被吞并（merge）
+  peaceAfterConflicts: 3,    // "连续冲突"达到此次数 → 鸣金休战（peace 事件）
+  peaceStreakYears: 18,      // 连续冲突的判定窗口：距上次开战不超过此年数仍算连续
+  peaceYears: 10,            // 休战持续年数（期间双方不开战）
+  peaceMergeGap: 30,         // 自愿合并：接壤且连续无冲突达到此年数（约一代人的太平）
+  peaceMergePopFrac: 0.25,   // 自愿合并：小方人口 ≤ 大方人口 × 此比例（一方人口明显小于另一方）
+  contactBreakGap: 4,        // 领地分离超过此年数才解除"接壤"（防边界抖动刷相遇事件）
+  splitThreshold: 240,       // 人口超过此值 → 分裂出新部落（split 事件，就近安家）
+  splitPopFrac: 0.45,        // 分支带走的人口比例（母部落保留其余，分支需能自立）
+  splitRadius: 12,           // 分支寻址半径（切比雪夫，瓦片数）
+  splitClaimRadius: 8,       // 分支落址后圈领地的最大半径
+  splitSiteFertMin: 0.45,    // 裂土分家：分支据点（在母部落领地内挑）的肥力下限
+  splitMinTiles: 24,         // 裂土分家：母部落至少拥有的领地格数（太穷不许分）
+};
+
+/* ================= 地形类型中文名（渲染图例与日志用，查表数据非参数） ================= */
+const TERRAIN_NAMES = {
+  deepsea: '深海',
+  shallowsea: '浅海',
+  beach: '沙滩',
+  plain: '平原',
+  forest: '森林',
+  mountain: '山地',
+  snow: '雪峰',
+};
+const SEA_TYPES = { deepsea: 1, shallowsea: 1 };   // 海洋类瓦片集合
+
+/* ================= 部落命名与配色（查表数据非参数） ================= */
+const TRIBE_ADJ = ['赤', '黑', '玄', '苍', '青', '白', '金', '乌', '碧', '朱', '黛', '灰', '褐', '素', '彤', '皓', '绯', '缃'];
+const TRIBE_TOTEM = ['鹿', '石', '鹰', '狼', '鱼', '贝', '松', '岩', '潮', '苇', '藤', '翎', '角', '鳞', '羽', '螺', '礁', '雾', '雷', '禾', '帆', '星', '火', '蕨', '蓼'];
+const TRIBE_SUFFIX = ['部落', '氏族'];
+const TRIBE_COLORS = ['#ff5148', '#ffb020', '#3fd8c9', '#ff7ac8', '#a06bff', '#5cb2ff'];  // 高区分度调色板（朱红/琥珀/湖青/桃红/青紫/天蓝）
+const DIR8 = ['东', '东南', '南', '西南', '西', '西北', '北', '东北'];
+
+function hexRgb(hex) {                            // '#rrggbb' → [r,g,b]（配色距离用，纯逻辑）
+  const v = parseInt(hex.slice(1), 16);
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+function colorDist(a, b) {                        // RGB 欧氏距离
+  return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+}
+function makeTribeName(rand, used) {              // 有味道的中文名：颜色字 + 图腾 + 后缀，全名不重
+  for (let tries = 0; tries < 24; tries++) {
+    const name = TRIBE_ADJ[(rand() * TRIBE_ADJ.length) | 0]
+      + TRIBE_TOTEM[(rand() * TRIBE_TOTEM.length) | 0]
+      + TRIBE_SUFFIX[(rand() * TRIBE_SUFFIX.length) | 0];
+    if (!used.has(name)) { used.add(name); return name; }
+  }
+  let n = 2;                                      // 池子撞穿的小概率兜底
+  while (used.has('无名' + n)) n++;
+  used.add('无名' + n);
+  return '无名' + n;
+}
+function pickTribeColor(world, id) {              // 调色板轮转，跳过与已用色过近的候选色
+  const used = world.tribes.map(t => t.color);
+  const start = (id - 1) % TRIBE_COLORS.length;
+  for (let d = 0; d < TRIBE_COLORS.length; d++) {
+    const c = TRIBE_COLORS[(start + d) % TRIBE_COLORS.length];
+    const rgb = hexRgb(c);
+    if (used.every(u => colorDist(rgb, hexRgb(u)) >= CONFIG.tribeColorDist)) return c;
+  }
+  return TRIBE_COLORS[start];                     // 池子耗尽：按序轮转兜底
+}
+function dirName(dx, dy) {                        // 八方位名（屏幕坐标 y 向下为南）
+  if (dx === 0 && dy === 0) return '原地';
+  const i = ((Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) % 8) + 8) % 8;
+  return DIR8[i];
+}
+function rgbToHex(r, g, b) {                      // [0~255]×3 → '#rrggbb'（分裂变体色用，纯逻辑）
+  const h = (v) => ('0' + Math.max(0, Math.min(255, Math.round(v))).toString(16)).slice(-2);
+  return '#' + h(r) + h(g) + h(b);
+}
+function variantTribeColor(world, parentHex) {    // 分裂继承变体色：RGB 通道轮转（同门异色、亮度同族）；
+  const used = world.tribes.map(t => t.color);    // 与现存部落撞色则再轮转，轮穿回退调色板
+  let c = hexRgb(parentHex);
+  for (let k = 0; k < 2; k++) {
+    c = [c[2], c[0], c[1]];
+    const v = rgbToHex(c[0], c[1], c[2]);
+    if (used.every(u => colorDist(hexRgb(v), hexRgb(u)) >= CONFIG.tribeColorDist)) return v;
+  }
+  return pickTribeColor(world, world.nextTribeId);
+}
+
+/* ================= 种子化 PRNG：mulberry32 ================= */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* ================= 经典二维 Perlin 噪声（置换表由种子流生成） =================
+   返回 noise2(x, y)，输出约在 [-1, 1]（内部已钳制）。 */
+function createPerlin(rand) {
+  const p = new Uint8Array(512);
+  const perm = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) perm[i] = i;
+  for (let i = 255; i > 0; i--) {                 // Fisher-Yates 洗牌，消耗固定次数 PRNG
+    const j = (rand() * (i + 1)) | 0;
+    const tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp;
+  }
+  for (let i = 0; i < 512; i++) p[i] = perm[i & 255];
+
+  function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function grad(h, x, y) {                        // 8 方向梯度
+    switch (h & 7) {
+      case 0: return  x + y;
+      case 1: return  x - y;
+      case 2: return -x + y;
+      case 3: return -x - y;
+      case 4: return  x;
+      case 5: return -x;
+      case 6: return  y;
+      default: return -y;
+    }
+  }
+  return function noise2(x, y) {
+    const xi = Math.floor(x), yi = Math.floor(y);
+    const X = xi & 255, Y = yi & 255;
+    const xf = x - xi, yf = y - yi;
+    const u = fade(xf), v = fade(yf);
+    const aa = p[p[X] + Y],     ab = p[p[X] + Y + 1];
+    const ba = p[p[X + 1] + Y], bb = p[p[X + 1] + Y + 1];
+    const n00 = grad(aa, xf, yf);
+    const n10 = grad(ba, xf - 1, yf);
+    const n01 = grad(ab, xf, yf - 1);
+    const n11 = grad(bb, xf - 1, yf - 1);
+    const value = lerp(lerp(n00, n10, u), lerp(n01, n11, u), v);
+    return value < -1 ? -1 : value > 1 ? 1 : value;
+  };
+}
+
+/* ================= fbm：多层噪声叠加（归一化到约 [-1, 1]） ================= */
+function fbm(noise2, x, y, octaves, baseFreq, lacunarity, gain) {
+  let amp = 1, freq = baseFreq, sum = 0, norm = 0;
+  for (let o = 0; o < octaves; o++) {
+    sum += amp * noise2(x * freq, y * freq);
+    norm += amp;
+    amp *= gain;
+    freq *= lacunarity;
+  }
+  return sum / norm;
+}
+
+function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+
+/* ================= 资源生成 ================= */
+function jitterRes(base, rand) {                  // 基准值 × [1-j, 1+j] 的随机浮动
+  return clamp01(base * (1 - CONFIG.resJitter + 2 * CONFIG.resJitter * rand()));
+}
+function makeResources(type, forest, rand) {
+  switch (type) {
+    case 'beach':
+      return { food: jitterRes(CONFIG.foodBeach, rand), wood: jitterRes(CONFIG.woodBeach, rand), stone: jitterRes(CONFIG.stoneBeach, rand) };
+    case 'plain':
+      return { food: jitterRes(CONFIG.foodPlain, rand), wood: jitterRes(CONFIG.woodPlain, rand), stone: jitterRes(CONFIG.stonePlain, rand) };
+    case 'forest':                                // 森林产食物 + 木材，木材随湿度密度上浮
+      return {
+        food: jitterRes(CONFIG.foodForest, rand),
+        wood: clamp01((CONFIG.woodForest + 0.5 * forest) * (1 - CONFIG.resJitter + 2 * CONFIG.resJitter * rand())),
+        stone: jitterRes(CONFIG.stoneForest, rand),
+      };
+    case 'mountain':
+      return { food: jitterRes(CONFIG.foodMountain, rand), wood: jitterRes(CONFIG.woodMountain, rand), stone: jitterRes(CONFIG.stoneMountain, rand) };
+    default:                                      // 雪峰
+      return { food: jitterRes(CONFIG.foodSnow, rand), wood: jitterRes(CONFIG.woodSnow, rand), stone: jitterRes(CONFIG.stoneSnow, rand) };
+  }
+}
+
+/* ================= 事件入史（受 CONFIG.eventsLimit 约束） ================= */
+function pushEvents(events, list) {
+  for (let i = 0; i < list.length; i++) {
+    events.push(list[i]);
+    if (events.length > CONFIG.eventsLimit) events.splice(0, events.length - CONFIG.eventsLimit);
+  }
+  return events;
+}
+
+/* ================= 选址评分：食物潜力 + 近水近林（平原优先体现在 pickSites 的分层排序） ================= */
+function siteScore(tiles, w, h, idx) {
+  const t = tiles[idx];
+  let s = t.base.food * CONFIG.tileFoodYield;
+  const r = CONFIG.siteScan;
+  let water = false, wood = false;
+  const x0 = Math.max(0, t.x - r), x1 = Math.min(w - 1, t.x + r);
+  const y0 = Math.max(0, t.y - r), y1 = Math.min(h - 1, t.y + r);
+  for (let y = y0; y <= y1 && !(water && wood); y++) {
+    for (let x = x0; x <= x1; x++) {
+      const ty = tiles[y * w + x].type;
+      if (ty === 'deepsea' || ty === 'shallowsea') water = true;
+      else if (ty === 'forest') wood = true;
+      if (water && wood) break;
+    }
+  }
+  if (water) s += CONFIG.siteWaterBonus;
+  if (wood) s += CONFIG.siteWoodBonus;
+  return s;
+}
+
+/* ================= 领地主张：从据点逐环向外圈地，圈满 want 块为止 =================
+   只主张无主的非海/雪峰瓦片；环内按固定行列序主张，保证同种子逐位一致。 */
+function claimAround(world, tribe, want, maxRadius) {
+  const { tiles, w, h } = world.terrain;
+  for (let r = 0; r <= maxRadius && tribe.tiles.length < want; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;   // 只走当前环
+        const x = tribe.x + dx, y = tribe.y + dy;
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const idx = y * w + x;
+        const t = tiles[idx];
+        if (SEA_TYPES[t.type] || t.type === 'snow' || world.claims[idx] !== 0) continue;
+        world.claims[idx] = tribe.id;
+        tribe.tiles.push(idx);
+        if (tribe.tiles.length >= want) return;
+      }
+    }
+  }
+}
+function releaseClaims(world, tribe) {            // 举族迁徙/消亡时放弃全部领地
+  for (const idx of tribe.tiles) world.claims[idx] = 0;
+  tribe.tiles.length = 0;
+}
+
+/* ================= 初始选址：平原→森林→沙滩 分层优先，保持最小间距 ================= */
+function pickSites(terrain, count) {
+  const TIER = { plain: 0, forest: 1, beach: 2 };
+  const cands = [];
+  for (let i = 0; i < terrain.tiles.length; i++) {
+    const t = terrain.tiles[i];
+    if (TIER[t.type] === undefined) continue;
+    cands.push({ idx: i, tier: TIER[t.type], score: siteScore(terrain.tiles, terrain.w, terrain.h, i) });
+  }
+  cands.sort((a, b) => a.tier - b.tier || b.score - a.score || a.idx - b.idx);
+  const chosen = [];
+  for (let relax = 0; relax < 3 && chosen.length < count; relax++) {
+    const spacing = Math.max(1, Math.ceil(CONFIG.tribeSpacingMin / (relax + 1)));   // 放不下时逐轮放宽
+    for (const c of cands) {
+      if (chosen.length >= count) break;
+      const t = terrain.tiles[c.idx];
+      let ok = true;
+      for (const j of chosen) {
+        const ot = terrain.tiles[j];
+        if (Math.max(Math.abs(ot.x - t.x), Math.abs(ot.y - t.y)) < spacing) { ok = false; break; }
+      }
+      if (ok) chosen.push(c.idx);
+    }
+  }
+  return chosen;
+}
+
+/* ================= 建部：据点、人口、初始存粮与领地 ================= */
+function makeTribe(world, baseIdx, id, rand, usedNames) {
+  const t = world.terrain.tiles[baseIdx];
+  const pop = CONFIG.popInitMin + Math.floor(rand() * (CONFIG.popInitMax - CONFIG.popInitMin + 1));
+  const tribe = {
+    id,                                           // 部落编号（1 起，tick 按 id 顺序更新）
+    name: makeTribeName(rand, usedNames),         // 中文名，如"赤鹿部落"
+    color: pickTribeColor(world, id),             // 高区分度配色（渲染领地与据点用）
+    x: t.x, y: t.y,                               // 据点坐标（瓦片）
+    pop,                                          // 人口（浮点，内部连续增长，显示时取整）
+    food: Math.round(pop * CONFIG.popEat * CONFIG.initFoodYears),   // 粮仓（开局存粮）
+    wood: 0,                                      // 木材库存
+    stone: 0,                                     // 石料库存
+    tiles: [],                                    // 领地：已主张瓦片索引（主张顺序）
+    lastFamine: -9999,                            // 上次饥荒事件年份（事件节流）
+  };
+  world.tribes.push(tribe);
+  claimAround(world, tribe, Math.ceil(pop * CONFIG.popPerTile), CONFIG.initClaimRadius);
+  return tribe;
+}
+
+/* ================= 世界生成 ================= */
+function createWorld(seed) {
+  const s = (typeof seed === 'number' && Number.isFinite(seed)) ? Math.floor(seed) : CONFIG.seed;
+  const rand = mulberry32(s >>> 0);
+  const noiseH = createPerlin(rand);              // 主地形噪声（第一组置换表）
+  const noiseW = createPerlin(rand);              // 海岸线扰动噪声（第二组置换表）
+  const noiseM = createPerlin(rand);              // 湿度场噪声（第三组置换表）
+
+  const W = CONFIG.mapW, H = CONFIG.mapH, n = W * H;
+  const elev = new Float64Array(n);
+  const moist = new Float64Array(n);
+
+  // 第一遍：纯噪声合成高度场与湿度场（不消耗 PRNG）
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const u = (x - W / 2) / (W / 2);            // 归一化到 [-1, 1]
+      const v = (y - H / 2) / (H / 2);
+      const mask = 1 - (u * u + v * v);           // 径向衰减（二次），角部为负值强压成海
+      let e0 = (fbm(noiseH, x / H, y / H, CONFIG.fbmOctaves, CONFIG.fbmBaseFreq, CONFIG.fbmLacunarity, CONFIG.fbmGain) + 1) / 2;
+      e0 = clamp01(0.5 + (e0 - 0.5) * CONFIG.noiseContrast);   // 对比度拉伸：拉开峰谷
+      const warp = fbm(noiseW, x / H, y / H, CONFIG.warpOctaves, CONFIG.warpFreq, CONFIG.fbmLacunarity, CONFIG.fbmGain);
+      const m = (fbm(noiseM, x / H, y / H, CONFIG.moistOctaves, CONFIG.moistFreq, CONFIG.fbmLacunarity, CONFIG.fbmGain) + 1) / 2;
+      let h = (CONFIG.reliefNoise * e0 + CONFIG.reliefBase) * (CONFIG.reliefMask * mask + CONFIG.maskFloor);
+      h += CONFIG.warpAmp * warp;                 // 噪声扰动海岸线
+      elev[i] = h;
+      moist[i] = m;
+    }
+  }
+
+  // 海平面：按目标陆地占比取高度分位数（钳制在合理区间），任何种子下孤岛规模都稳定
+  const sorted = Array.from(elev).sort((a, b) => a - b);
+  const qIdx = Math.min(n - 1, Math.floor((1 - CONFIG.landTarget) * n));
+  const seaLevel = Math.max(CONFIG.seaLevelMin, Math.min(CONFIG.seaLevelMax, sorted[qIdx]));
+
+  // 第二遍：按高度分类 + 资源丰度（资源抖动按固定瓦片顺序消耗 PRNG，保证可复现）
+  const tiles = new Array(n);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const h = elev[i], m = moist[i];
+      let type;
+      if (h < seaLevel - CONFIG.deepSeaDrop) type = 'deepsea';
+      else if (h < seaLevel) type = 'shallowsea';
+      else if (h < seaLevel + CONFIG.beachRise) type = 'beach';
+      else if (h < seaLevel + CONFIG.plainRise) type = (m >= CONFIG.moistForestMin) ? 'forest' : 'plain';
+      else if (h < seaLevel + CONFIG.forestRise) type = 'forest';
+      else if (h < seaLevel + CONFIG.mountainRise) type = 'mountain';
+      else type = 'snow';
+      const forest = type === 'forest' ? clamp01((m - 0.25) / 0.6) : 0;   // 湿度越高林子越密
+      const res = SEA_TYPES[type] ? { food: 0, wood: 0, stone: 0 } : makeResources(type, forest, rand);
+      const base = { food: res.food, wood: res.wood, stone: res.stone };   // 初始丰度快照（再生上限）
+      tiles[i] = { x, y, elev: h, moist: m, type, forest, res, base, fert: SEA_TYPES[type] ? 0 : 1 };
+    }
+  }
+
+  // 地形统计
+  const stats = { sea: 0, land: 0, landRatio: 0, counts: {} };
+  for (const tile of tiles) {
+    stats.counts[tile.type] = (stats.counts[tile.type] || 0) + 1;
+    if (SEA_TYPES[tile.type]) stats.sea++; else stats.land++;
+  }
+  stats.landRatio = stats.land / n;
+
+  // 陆地瓦片索引（资源再生每年只扫陆地）
+  const landIdxs = [];
+  for (let i = 0; i < n; i++) if (!SEA_TYPES[tiles[i].type]) landIdxs.push(i);
+
+  const terrain = { w: W, h: H, seaLevel, tiles, stats, landIdxs };
+  const world = {
+    seed: s,
+    year: CONFIG.startYear,
+    tribes: [],                                   // 存活部落数组（按 id 升序，tick 固定顺序更新）
+    events: [],                                   // 事件历史，元素形如 {year, type, text}
+    terrain,
+    claims: new Uint16Array(n),                   // 瓦片归属：0=无主，否则部落 id（Uint16：分裂累积的 id 会超 255）
+    overYear: new Int32Array(n),                  // 瓦片最近一次被过度采集的年份（年末肥力结算用）
+    relations: {},                                // 部落对关系：键 '小id|大id' → 接触/冲突/休战状态（阶段三）
+    nextTribeId: 1,                               // 部落 id 发放器：只增不复用，分裂取号用（阶段三）
+    rand,                                         // 种子化 PRNG 流：tick 内一切随机都从这里取
+    tick() { return tickWorld(this); },
+  };
+
+  // 部落诞生：评分选址 → 依次建部（名称/人口走种子流，保持可复现），发 founded 事件
+  const usedNames = new Set();
+  const sites = pickSites(terrain, CONFIG.initialTribes);
+  const founded = [];
+  for (let k = 0; k < sites.length; k++) {
+    const tribe = makeTribe(world, sites[k], k + 1, rand, usedNames);
+    const t = terrain.tiles[sites[k]];
+    founded.push({
+      year: world.year,
+      type: 'founded',
+      text: tribe.name + '在孤岛' + dirName(t.x - W / 2, t.y - H / 2) + '方的'
+        + TERRAIN_NAMES[t.type] + '地带落地生根，人口 ' + Math.round(tribe.pop),
+    });
+  }
+  pushEvents(world.events, founded);
+  world.nextTribeId = sites.length + 1;           // 分裂从这里继续取号（id 只增不复用）
+  world.usedNames = usedNames;                    // 分裂命名沿用同一集合，保证全局不重名
+  return world;
+}
+
+/* ================= 领地预扫：距离计数排序 + 年度聚合量（性能关键路径） =================
+   每部落每年一次 O(领地) 预扫，一次产出全年结算共用的四样数据：
+   1) ORD：领地瓦片按"到据点切比雪夫距离"升序的索引序（同距按主张序）——采集的
+      "先近后远"由它保证，取代逐年 slice+sort（旧实现占整年结算近四成耗时）；
+   2) 肥力检查量：据点周边 fertCheckRadius 内的平均肥力（迁徙触发用）；
+   3) 可持续产出 susFood：Σ 初始丰度 × 肥力 × 换算率 × 轻采上限（吃饭/承载力用）；
+   4) 木石附带轻采：逐瓦片独立扣减与产出（与序无关，并入预扫省一遍全领地遍历）。
+   ORD/CNT/DIS/PRE 为模块级复用缓冲：tick 内按部落顺序使用、无重入，零分配。 */
+const ORD = new Int32Array(CONFIG.mapW * CONFIG.mapH);   // 距离序领地索引（领地 ≤ 全图格数）
+const DIS = new Int32Array(CONFIG.mapW * CONFIG.mapH);   // 预扫第一遍记下的各瓦片距离
+const CNT = new Int32Array(CONFIG.mapW + CONFIG.mapH);   // 距离桶计数（切比雪夫距离 ≤ max(w,h)-1）
+const PRE = { ordLen: 0, fertSum: 0, fertCnt: 0, susFood: 0, wood: 0, stone: 0 };   // 预扫结果（逐部落覆写）
+
+function prepassTribe(world, tribe) {
+  const tiles = world.terrain.tiles;
+  const own = tribe.tiles;
+  const hx = tribe.x, hy = tribe.y;
+  const R = CONFIG.fertCheckRadius;
+  const susScale = CONFIG.tileFoodYield * CONFIG.overFrac;
+  const woodFrac = CONFIG.gatherWoodFrac, woodYld = CONFIG.tileWoodYield;
+  const stoneFrac = CONFIG.gatherStoneFrac, stoneYld = CONFIG.tileStoneYield;
+  let fertSum = 0, fertCnt = 0, susFood = 0, wood = 0, stone = 0, maxD = 0;
+  CNT.fill(0);
+  for (let i = 0; i < own.length; i++) {          // 第一遍：计数 + 聚合 + 木石轻采
+    const idx = own[i];
+    const t = tiles[idx];
+    const dx = t.x - hx, dy = t.y - hy;
+    const adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+    const d = adx > ady ? adx : ady;
+    DIS[i] = d;
+    CNT[d]++;
+    if (d > maxD) maxD = d;
+    if (d <= R) { fertSum += t.fert; fertCnt++; }
+    susFood += t.base.food * t.fert * susScale;
+    const w = t.res.wood * woodFrac;
+    const st = t.res.stone * stoneFrac;
+    wood += w * woodYld;
+    stone += st * stoneYld;
+    t.res.wood -= w;
+    t.res.stone -= st;
+  }
+  let acc = 0;
+  for (let d = 0; d <= maxD; d++) { const c = CNT[d]; CNT[d] = acc; acc += c; }   // 计数 → 桶起点
+  for (let i = 0; i < own.length; i++) ORD[CNT[DIS[i]]++] = own[i];   // 同距按主张序落位
+  PRE.ordLen = own.length;
+  PRE.fertSum = fertSum;
+  PRE.fertCnt = fertCnt;
+  PRE.susFood = susFood;
+  PRE.wood = wood;
+  PRE.stone = stone;
+  return PRE;
+}
+
+/* ================= 年度结算 1：采集（领地内先近后远，两遍制） =================
+   第一遍"轻采"：每瓦片至多采走可采出量的 overFrac，不伤地力；仍不够目标，
+   第二遍"深挖"：把存量也挖出来，超限部分记过度采集（年末扣肥力）。
+   木石已在预扫中附带轻采。产出与存量扣减一一对应换算。
+   遍历序 = prepassTribe 的距离序（先近后远；同距按主张序）。 */
+function harvestTribe(world, tribe, pre) {
+  const tiles = world.terrain.tiles;
+  const n = pre.ordLen;
+  const yld = CONFIG.tileFoodYield, ovf = CONFIG.overFrac;
+  const target = tribe.pop * CONFIG.popEat * CONFIG.gatherMargin;
+  let food = 0;
+  for (let oi = 0; oi < n; oi++) {                  // 第一遍：可持续轻采
+    if (food >= target) break;
+    const t = tiles[ORD[oi]];
+    const cap = t.res.food * t.fert * yld;          // 本年该瓦片可采出上限
+    if (cap <= 0) continue;
+    const take = Math.min(cap * ovf, target - food);
+    if (take <= 0) continue;
+    food += take;
+    t.res.food = Math.max(0, t.res.food - take / yld);
+  }
+  if (food < target) {
+    for (let oi = 0; oi < n; oi++) {                // 第二遍：过度采集（伤肥力）
+      if (food >= target) break;
+      const idx = ORD[oi];
+      const t = tiles[idx];
+      const cap = t.res.food * t.fert * yld;
+      if (cap <= 0) continue;
+      const take = Math.min(cap, target - food);
+      food += take;
+      t.res.food = Math.max(0, t.res.food - take / yld);
+      if (take / cap > ovf) world.overYear[idx] = world.year;
+    }
+  }
+  return { food, wood: pre.wood, stone: pre.stone };
+}
+
+/* ================= 年度结算 2：吃饭、增长与饥荒 =================
+   盈余（本年采集 > 口粮）且人口未达领地承载力 → 逻辑斯蒂增长；
+   缺粮先吃库存，库存见底按缺口比例减员，并按 famineGap 节流发 famine 事件。 */
+function sustainTribe(world, tribe, got, fresh, pre) {
+  const need = tribe.pop * CONFIG.popEat;
+  tribe.wood = Math.min(tribe.wood + got.wood, CONFIG.stockCapWood);
+  tribe.stone = Math.min(tribe.stone + got.stone, CONFIG.stockCapStone);
+  const pool = tribe.food + got.food;
+  if (pool >= need) {
+    tribe.food = Math.min(pool - need, CONFIG.stockCapFood);
+    const K = pre.susFood / CONFIG.popEat;        // 承载力（预扫已算：领地当前肥力下可持续产出 ÷ 口粮）
+    if (got.food > need && tribe.pop < K) {
+      tribe.pop += CONFIG.popGrowR * tribe.pop * (1 - tribe.pop / K);
+    }
+  } else {
+    const deaths = tribe.pop * CONFIG.famineDeathFrac * ((need - pool) / need);
+    tribe.food = 0;
+    tribe.pop = Math.max(0, tribe.pop - deaths);
+    if (deaths >= 0.5 && world.year - tribe.lastFamine >= CONFIG.famineGap) {
+      tribe.lastFamine = world.year;
+      fresh.push({
+        year: world.year,
+        type: 'famine',
+        text: tribe.name + '粮仓见底，' + Math.max(1, Math.round(deaths)) + '人未能熬过荒年',
+      });
+    }
+  }
+}
+
+/* ================= 迁徙寻地（阶段三抽出共用）：radius 内评分最高的无主可居地 =================
+   评分 = 选址潜力 × 肥力折算；评分最高者胜，扫描序定平局。返回瓦片索引，无解返回 -1。 */
+function findNewHome(world, tribe, radius) {
+  const tiles = world.terrain.tiles;
+  const { w, h } = world.terrain;
+  let best = -1, bestScore = -1;
+  for (let dy = -radius; dy <= radius; dy++) {
+    const y = tribe.y + dy;
+    if (y < 0 || y >= h) continue;
+    for (let dx = -radius; dx <= radius; dx++) {
+      const x = tribe.x + dx;
+      if (x < 0 || x >= w) continue;
+      const j = y * w + x;
+      if (world.claims[j] !== 0) continue;
+      const t = tiles[j];
+      if (t.type !== 'plain' && t.type !== 'forest' && t.type !== 'beach') continue;   // 新据点须可居
+      if (t.fert < CONFIG.migrateFertMin) continue;                                    // 撂荒薄地不复用
+      const s = siteScore(tiles, w, h, j) * (0.3 + 0.7 * t.fert);
+      if (s > bestScore) { bestScore = s; best = j; }
+    }
+  }
+  return best;
+}
+
+/* ================= 落址（阶段三抽出共用）：放弃旧领地，举族搬到 idx 并按人口圈地 ================= */
+function settleTribe(world, tribe, idx) {
+  releaseClaims(world, tribe);
+  const nb = world.terrain.tiles[idx];
+  tribe.x = nb.x; tribe.y = nb.y;
+  world.claims[idx] = tribe.id;
+  tribe.tiles.push(idx);
+  claimAround(world, tribe, Math.ceil(tribe.pop * CONFIG.popPerTile), CONFIG.migrateClaimRadius);
+}
+
+/* ================= 年度结算 3：迁徙（据点周边肥力崩塌时举族搬走） =================
+   触发检查用预扫聚合的据点周边平均肥力；在搜索半径内找一块肥力达标的无主可居地：
+   找到 → 放弃旧领地整体搬迁（migrated 事件）；找不到 → 无地可去，人口额外衰减
+   （靠饥荒与消亡收尾）。 */
+function tryMigrate(world, tribe, fresh, pre) {
+  if (pre.fertCnt === 0 || pre.fertSum / pre.fertCnt >= CONFIG.fertCollapse) return false;
+  const best = findNewHome(world, tribe, CONFIG.migrateRadius);
+  if (best < 0) {
+    tribe.pop *= (1 - CONFIG.stuckDecay);         // 无地可去：人口衰减
+    return false;
+  }
+  const ox = tribe.x, oy = tribe.y;
+  settleTribe(world, tribe, best);
+  const nb = world.terrain.tiles[best];
+  fresh.push({
+    year: world.year,
+    type: 'migrated',
+    text: tribe.name + '因故土肥力耗尽，举族迁往' + dirName(nb.x - ox, nb.y - oy)
+      + '方的新家园（人口 ' + Math.round(tribe.pop) + '）',
+  });
+  return true;
+}
+
+/* ================= 年度结算 4：扩张（人口驱动，向领地边界主张新瓦片） =================
+   领地目标 = 人口 × popPerTile；缺口按 claimCatchFrac 补齐，至多 claimPerYearMax 块/年。
+   候选按"潜力×肥力"评分（平原 > 森林 > 沙滩 > 山地），同分取扫描序，保证可复现。
+   实现：每年只对领地做一遍全扫建候选表（领地主张序 × 邻格固定序），此后每主张一块
+   只增量补扫新瓦片的邻格——新瓦片总在领地序末尾，其候选追加在表尾，与"每轮全扫一遍"
+   的选取序逐位一致（评分只依赖候选格自身，同分先见先得），省掉重复全扫。 */
+function expandTribe(world, tribe) {
+  const want = Math.ceil(tribe.pop * CONFIG.popPerTile);
+  if (tribe.tiles.length >= want) return;
+  let quota = Math.min(CONFIG.claimPerYearMax,
+    Math.max(1, Math.ceil((want - tribe.tiles.length) * CONFIG.claimCatchFrac)));
+  const tiles = world.terrain.tiles;
+  const { w, h } = world.terrain;
+  const claims = world.claims;
+  const cand = [];                                // 候选 {idx, score}；重复无害（同分先见先得）
+  function scanTile(idx) {                        // 单瓦片 8 邻候选入表（顺序与全扫一致）
+    const t = tiles[idx];
+    for (let dy = -1; dy <= 1; dy++) {
+      const y = t.y + dy;
+      if (y < 0 || y >= h) continue;
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const x = t.x + dx;
+        if (x < 0 || x >= w) continue;
+        const j = y * w + x;
+        if (claims[j] !== 0) continue;
+        const nt = tiles[j];
+        if (SEA_TYPES[nt.type] || nt.type === 'snow') continue;
+        cand.push({ idx: j, score: (nt.base.food * CONFIG.tileFoodYield
+          + nt.base.wood * CONFIG.tileWoodYield * 0.5) * nt.fert });
+      }
+    }
+  }
+  for (let i = 0; i < tribe.tiles.length; i++) scanTile(tribe.tiles[i]);   // 初扫：领地主张序
+  while (quota-- > 0) {
+    let best = -1, bestScore = -1;
+    for (let i = 0; i < cand.length; i++) {
+      const c = cand[i];
+      if (c === null) continue;
+      if (claims[c.idx] !== 0) { cand[i] = null; continue; }   // 已被占（本年先前主张）：作废
+      if (c.score > bestScore) { bestScore = c.score; best = c.idx; }
+    }
+    if (best < 0) return;                         // 领地被海/邻部/雪峰围死，本年止步
+    claims[best] = tribe.id;
+    tribe.tiles.push(best);
+    scanTile(best);                               // 新瓦片的邻格候选追加在表尾
+  }
+}
+
+/* ================= 年度结算 5：消亡 ================= */
+function checkExtinct(world, tribe, fresh) {
+  if (tribe.pop >= CONFIG.extinctPop) return false;
+  releaseClaims(world, tribe);
+  fresh.push({
+    year: world.year,
+    type: 'extinct',
+    text: tribe.name + '人口凋零殆尽，从沙盘上除名',
+  });
+  return true;
+}
+
+/* ================= 资源再生与肥力回复（每年年末，扫全部陆地瓦片） =================
+   本年被过度采集的瓦片扣肥力，其余缓慢回复；资源按"缺口×regrowRate×肥力"
+   向初始丰度再生（缺口式自平衡：采得多回得慢，撂荒后几年即可复原；
+   石料亦再生，为沙盘简化）。 */
+function regrowTiles(world) {
+  const tiles = world.terrain.tiles;
+  const land = world.terrain.landIdxs;
+  const over = world.overYear, yr = world.year;
+  const hit = CONFIG.fertHit, heal = CONFIG.fertHeal, rate = CONFIG.regrowRate;
+  for (let i = 0; i < land.length; i++) {
+    const idx = land[i];
+    const t = tiles[idx];
+    if (over[idx] === yr) t.fert = Math.max(0, t.fert - hit);
+    else if (t.fert < 1) t.fert = Math.min(1, t.fert + heal);
+    const g = rate * t.fert;
+    t.res.food = Math.min(t.base.food, t.res.food + (t.base.food - t.res.food) * g);
+    t.res.wood = Math.min(t.base.wood, t.res.wood + (t.base.wood - t.res.wood) * g);
+    t.res.stone = Math.min(t.base.stone, t.res.stone + (t.base.stone - t.res.stone) * g);
+  }
+}
+
+/* ================= 部落互动（阶段三新增）：接触/冲突/休战/吞并/自愿合并 =================
+   关系状态按部落对存于 world.relations（键 '小id|大id'）：
+   { contact 是否接壤, contactYear 首次接壤年, lastConflict 上次开战年,
+     lastAdj 上次相邻年, streak 窗口内连续冲突次数, truceUntil 休战至某年 }。
+   领地相邻 → contact 相遇事件；接壤期间每年判定冲突：基础概率 × 拥挤度 × 实力差，
+   双方掉人口，败方或灭、或被吞并（merge）、或被迫迁走；窗口内连续冲突 → 休战（peace）；
+   接壤多年无冲突且一方人口明显偏小 → 自愿并入（merge）。对间结算按 id 升序，保证可复现。 */
+function pairKey(a, b) { return a < b ? a + '|' + b : b + '|' + a; }
+
+function scanTerritoryAdjacency(world) {          // 一遍扫描领地边界，返回接壤部落对集合
+  const { w, h, landIdxs } = world.terrain;
+  const claims = world.claims;
+  const DELTA = [[1, 0], [-1, 1], [0, 1], [1, 1]];   // 8 邻域取半侧：每对相邻关系只记一次
+  const adj = {};
+  for (let i = 0; i < landIdxs.length; i++) {
+    const idx = landIdxs[i];
+    const c = claims[idx];
+    if (c === 0) continue;
+    const x = idx % w, y = (idx / w) | 0;
+    for (let d = 0; d < 4; d++) {
+      const nx = x + DELTA[d][0], ny = y + DELTA[d][1];
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      const oc = claims[ny * w + nx];
+      if (oc !== 0 && oc !== c) adj[pairKey(c, oc)] = true;
+    }
+  }
+  return adj;
+}
+
+function pruneRelations(world) {                  // 部落除名后清掉涉及它的关系条目
+  const alive = {};
+  for (const t of world.tribes) alive[t.id] = 1;
+  for (const key of Object.keys(world.relations)) {
+    const bar = key.indexOf('|');
+    if (!alive[Number(key.slice(0, bar))] || !alive[Number(key.slice(bar + 1))]) {
+      delete world.relations[key];
+    }
+  }
+}
+
+function absorbTribe(world, winner, loser, fresh, voluntary) {   // 吞并：丁口与领地尽归胜者
+  for (const idx of loser.tiles) {
+    world.claims[idx] = winner.id;
+    winner.tiles.push(idx);
+  }
+  loser.tiles.length = 0;
+  winner.pop += loser.pop;
+  winner.food = Math.min(CONFIG.stockCapFood, winner.food + loser.food);
+  winner.wood = Math.min(CONFIG.stockCapWood, winner.wood + loser.wood);
+  winner.stone = Math.min(CONFIG.stockCapStone, winner.stone + loser.stone);
+  loser.pop = 0;
+  loser.dead = true;
+  fresh.push({
+    year: world.year,
+    type: 'merge',
+    text: voluntary
+      ? loser.name + '与' + winner.name + '比邻而居多年相安无事，丁口单薄，自愿并入' + winner.name
+      : winner.name + '攻破' + loser.name + '据点，' + loser.name + '举族并入，丁口领地尽归胜者',
+  });
+}
+
+function extinctTribe(world, tribe, fresh, why) { // 消亡：除名并释放领地（事件史保留）
+  releaseClaims(world, tribe);
+  tribe.pop = 0;
+  tribe.dead = true;
+  fresh.push({
+    year: world.year,
+    type: 'extinct',
+    text: why + tribe.name + '人口凋零殆尽，从沙盘上除名',
+  });
+}
+
+function resolveInteractions(world, fresh) {
+  const year = world.year;
+  const adj = scanTerritoryAdjacency(world);
+  for (const key of Object.keys(adj)) {           // 新接壤对入册
+    if (!world.relations[key]) {
+      world.relations[key] = { contact: false, contactYear: year, lastConflict: -9999, lastAdj: -9999, streak: 0, truceUntil: 0 };
+    }
+  }
+  const pairs = [];                               // id 对升序：固定结算顺序（预解析，避免逐年 split 分配）
+  for (const key of Object.keys(world.relations)) {
+    const bar = key.indexOf('|');
+    pairs.push([Number(key.slice(0, bar)), Number(key.slice(bar + 1)), key]);
+  }
+  pairs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const byId = {};
+  for (const t of world.tribes) byId[t.id] = t;
+
+  for (let pi = 0; pi < pairs.length; pi++) {     // 接触判定（防抖：分离多年才解除接壤）
+    const idA = pairs[pi][0], idB = pairs[pi][1], key = pairs[pi][2];
+    const rel = world.relations[key];
+    const A = byId[idA], B = byId[idB];
+    if (adj[key]) {
+      rel.lastAdj = year;
+      if (!rel.contact && A && B) {
+        rel.contact = true;
+        rel.contactYear = year;
+        fresh.push({
+          year,
+          type: 'contact',
+          text: A.name + '与' + B.name + '的领地接壤，两族自此往来',
+        });
+      }
+    } else if (rel.contact && year - rel.lastAdj > CONFIG.contactBreakGap) {
+      rel.contact = false;                        // 边界分开较久：解除接壤（再遇再报）
+    }
+  }
+
+  for (let pi = 0; pi < pairs.length; pi++) {     // 互动结算：仅限当前仍接壤的对
+    const key = pairs[pi][2];
+    const rel = world.relations[key];
+    if (!rel.contact) continue;
+    const A = byId[pairs[pi][0]], B = byId[pairs[pi][1]];
+    if (!A || !B || A.dead || B.dead) continue;   // 本年已消亡/被并：跳过
+    // —— 和平路线：接壤多年无冲突，且一方人口明显偏小 → 自愿并入 ——
+    if (year - Math.max(rel.contactYear, rel.lastConflict) >= CONFIG.peaceMergeGap) {
+      const small = A.pop <= B.pop ? A : B;
+      const big = small === A ? B : A;
+      if (small.pop > CONFIG.extinctPop && small.pop <= big.pop * CONFIG.peaceMergePopFrac) {
+        absorbTribe(world, big, small, fresh, true);
+        continue;
+      }
+    }
+    if (year < rel.truceUntil) continue;          // 休战冷却中
+    // —— 冲突判定：基础概率 × 拥挤度（人/格 相对 popPerTile）× 实力差加成 ——
+    const press = Math.max(A.pop / Math.max(1, A.tiles.length), B.pop / Math.max(1, B.tiles.length))
+      / CONFIG.popPerTile;
+    const pLo = Math.min(A.pop, B.pop), pHi = Math.max(A.pop, B.pop);
+    const edge = Math.min(CONFIG.conflictEdgeCap, pHi / Math.max(1, pLo));
+    if (world.rand() >= CONFIG.conflictBase * press * edge) continue;   // 今年相安无事
+    // —— 开战：双方掉人口，败方（人口少的一方）加倍放血 ——
+    const weak = A.pop <= B.pop ? A : B;
+    const strong = weak === A ? B : A;
+    const weakBefore = weak.pop;
+    const dWeak = weak.pop * CONFIG.conflictDeathFrac * CONFIG.conflictLoserMult;
+    const dStrong = strong.pop * CONFIG.conflictDeathFrac;
+    weak.pop = Math.max(0, weak.pop - dWeak);
+    strong.pop = Math.max(0, strong.pop - dStrong);
+    rel.streak = (year - rel.lastConflict <= CONFIG.peaceStreakYears) ? rel.streak + 1 : 1;
+    rel.lastConflict = year;
+    fresh.push({
+      year,
+      type: 'conflict',
+      text: weak.name + '与' + strong.name + '为争夺猎场兵戎相见，'
+        + Math.max(1, Math.round(dWeak + dStrong)) + '人丧命',
+    });
+    // —— 败方处置：灭亡 / 据点陷落被吞并 / 被迫举族迁走 ——
+    if (weak.pop < CONFIG.extinctPop) {
+      extinctTribe(world, weak, fresh, '在连年冲突中，');
+    } else if (strong.pop >= CONFIG.extinctPop && weak.pop <= strong.pop * CONFIG.mergePopFrac) {
+      absorbTribe(world, strong, weak, fresh, false);
+    } else if (weak.pop <= weakBefore * CONFIG.conflictFleeFrac
+      && world.rand() < CONFIG.conflictFleeChance) {
+      const home = findNewHome(world, weak, CONFIG.migrateRadius);
+      if (home >= 0) {
+        const ox = weak.x, oy = weak.y;
+        settleTribe(world, weak, home);
+        const nb = world.terrain.tiles[home];
+        fresh.push({
+          year,
+          type: 'migrated',
+          text: weak.name + '为' + strong.name + '所败，被迫举族迁往' + dirName(nb.x - ox, nb.y - oy)
+            + '方的新家园（人口 ' + Math.round(weak.pop) + '）',
+        });
+      }
+    }
+    if (!strong.dead && strong.pop < CONFIG.extinctPop) {
+      extinctTribe(world, strong, fresh, '在连年冲突中，');
+    }
+    // —— 窗口内连续冲突 → 鸣金休战（仅当两族都还在）——
+    if (rel.streak >= CONFIG.peaceAfterConflicts && !weak.dead && !strong.dead) {
+      fresh.push({
+        year,
+        type: 'peace',
+        text: weak.name + '与' + strong.name + '连年相争后鸣金休战，约定互不相犯',
+      });
+      rel.truceUntil = year + CONFIG.peaceYears;
+      rel.streak = 0;
+    }
+  }
+  if (world.tribes.some(t => t.dead)) world.tribes = world.tribes.filter(t => !t.dead);
+  pruneRelations(world);
+}
+
+/* ================= 部落分裂（阶段三新增）：人丁过盛分家，就近另立门户 =================
+   优先找无主可居地落址；岛上已圈满时改为"裂土分家"——在母部落领地内挑一块沃土做
+   分支据点，并按分支人口把周边母部落领地逐环划过去。快照遍历（每部落同年至多分家
+   一次，防级联）；分支带走 splitPopFrac 的人口与库存，继承母部落的变体色（通道轮转）。 */
+function pickSecessionSite(world, tribe) {        // 裂土分家：在母部落领地中挑最佳分支据点
+  const tiles = world.terrain.tiles;
+  const { w, h } = world.terrain;
+  const home = tribe.y * w + tribe.x;
+  let best = -1, bestScore = -1;
+  for (const idx of tribe.tiles) {
+    if (idx === home) continue;
+    const t = tiles[idx];
+    if (Math.max(Math.abs(t.x - tribe.x), Math.abs(t.y - tribe.y)) < 2) continue;   // 须离老据点有段距离
+    if (t.fert < CONFIG.splitSiteFertMin) continue;
+    const s = siteScore(tiles, w, h, idx) * (0.3 + 0.7 * t.fert);
+    if (s > bestScore) { bestScore = s; best = idx; }
+  }
+  return best;
+}
+function secedeLand(world, parent, child) {       // 逐环把母部落领地划给分支，直到够分支人口耕种
+  const { w, h } = world.terrain;
+  const parentHome = parent.y * w + parent.x;
+  const want = Math.ceil(child.pop * CONFIG.popPerTile);
+  for (let r = 0; r < Math.max(w, h); r++) {
+    if (child.tiles.length >= want) break;
+    if (parent.tiles.length - (child.tiles.length - 1) <= 2) break;   // 母部落至少留老据点与一格立身
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = child.x + dx, y = child.y + dy;
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const idx = y * w + x;
+        if (idx === parentHome || world.claims[idx] !== parent.id) continue;
+        world.claims[idx] = child.id;
+        child.tiles.push(idx);
+        if (child.tiles.length >= want
+          || parent.tiles.length - (child.tiles.length - 1) <= 2) break;
+      }
+      if (child.tiles.length >= want
+        || parent.tiles.length - (child.tiles.length - 1) <= 2) break;
+    }
+  }
+  parent.tiles = parent.tiles.filter(idx => world.claims[idx] === parent.id);   // 顺序不变，剔除已划走的地
+}
+function resolveSplits(world, fresh) {
+  const snapshot = world.tribes.slice();
+  for (const tribe of snapshot) {
+    if (tribe.dead || tribe.pop <= CONFIG.splitThreshold) continue;
+    let home = findNewHome(world, tribe, CONFIG.splitRadius);
+    let secede = false;
+    if (home < 0) {                               // 周边无空地：改走裂土分家
+      if (tribe.tiles.length < CONFIG.splitMinTiles) continue;
+      home = pickSecessionSite(world, tribe);
+      if (home < 0) continue;                     // 领地太贫瘠：来年再议
+      secede = true;
+    }
+    const prePop = tribe.pop;
+    const child = {
+      id: world.nextTribeId++,
+      name: makeTribeName(world.rand, world.usedNames),
+      color: variantTribeColor(world, tribe.color),
+      x: 0, y: 0,
+      pop: prePop * CONFIG.splitPopFrac,
+      food: Math.min(CONFIG.stockCapFood, tribe.food * CONFIG.splitPopFrac),
+      wood: Math.min(CONFIG.stockCapWood, tribe.wood * CONFIG.splitPopFrac),
+      stone: Math.min(CONFIG.stockCapStone, tribe.stone * CONFIG.splitPopFrac),
+      tiles: [],
+      lastFamine: -9999,
+    };
+    tribe.pop = prePop - child.pop;
+    tribe.food -= child.food;
+    tribe.wood -= child.wood;
+    tribe.stone -= child.stone;
+    world.tribes.push(child);                     // id 只增，数组仍保持 id 升序
+    const nb = world.terrain.tiles[home];
+    child.x = nb.x; child.y = nb.y;
+    world.claims[home] = child.id;
+    child.tiles.push(home);
+    if (secede) secedeLand(world, tribe, child);
+    else claimAround(world, child, Math.ceil(child.pop * CONFIG.popPerTile), CONFIG.splitClaimRadius);
+    fresh.push({
+      year: world.year,
+      type: 'split',
+      text: tribe.name + '人丁过盛（人口 ' + Math.round(prePop) + '），分出' + child.name + '，'
+        + (secede ? '在' + dirName(nb.x - tribe.x, nb.y - tribe.y) + '方裂土另立门户'
+                  : '迁往' + dirName(nb.x - tribe.x, nb.y - tribe.y) + '方另立门户')
+        + '（人口 ' + Math.round(child.pop) + '）',
+    });
+  }
+}
+
+/* ================= tick：推进一年，按部落 id 顺序年度结算，返回新增事件数组 ================= */
+function tickWorld(world) {
+  world.year += 1;
+  const fresh = [];
+  for (const tribe of world.tribes) {             // 数组即 id 升序：固定顺序更新
+    const pre = prepassTribe(world, tribe);       // 预扫：距离序 + 肥力检查量 + 可持续产出 + 木石轻采
+    const got = harvestTribe(world, tribe, pre);
+    sustainTribe(world, tribe, got, fresh, pre);
+    tryMigrate(world, tribe, fresh, pre);
+    expandTribe(world, tribe);
+    if (checkExtinct(world, tribe, fresh)) tribe.dead = true;
+  }
+  if (world.tribes.some(t => t.dead)) world.tribes = world.tribes.filter(t => !t.dead);
+  resolveInteractions(world, fresh);              // 阶段三：接触/冲突/休战/吞并/自愿合并
+  resolveSplits(world, fresh);                    // 阶段三：人丁过盛分家
+  regrowTiles(world);                             // 事件一律 {year, type, text}，经 pushEvents 入史
+  pushEvents(world.events, fresh);
+  return fresh;
+}
+
+/* ================= 导出 ================= */
+globalThis.IslandSim = { CONFIG, TERRAIN_NAMES, mulberry32, createPerlin, fbm, createWorld };
+/* ===== SIM-CORE-END ===== */
+</script>
+
+<!-- 渲染与 UI 薄壳：只能写在 SIM-CORE-END 之后 -->
+<script>
+(function () {
+  'use strict';
+  const S = IslandSim;
+  const C = S.CONFIG;
+  const $ = (id) => document.getElementById(id);
+
+  /* ---- 地形配色：平铺干净，各地类一眼可辨 ---- */
+  const PAL = {
+    deepsea: '#0d293b',
+    shallowsea: '#1c5a7a',
+    beach: '#d8c48c',
+    plain: '#93b06b',
+    forestSparse: '#5c8f56',
+    forestDense: '#2e6135',
+    mountain: '#8a8377',
+    snow: '#e8edf0',
+  };
+
+  /* ---- 编年史按事件类型着色 ---- */
+  const TYPE_COLORS = {
+    'founded':  '#7cc36a',   // 建部：草绿
+    'contact':  '#9fb6d9',   // 相遇：淡蓝
+    'conflict': '#e06a58',   // 冲突：砖红
+    'peace':    '#63c0a0',   // 休战：青玉
+    'merge':    '#d98ab8',   // 合并：蔷薇
+    'split':    '#e0964f',   // 分裂：橙
+    'famine':   '#d9b13f',   // 饥荒：麦黄
+    'migrated': '#6fb3e0',   // 迁徙：天蓝
+    'extinct':  '#97a1ad',   // 灭亡：石灰
+  };
+
+  const GHOST_MS = 2200;        // 灭亡部落实体淡出时长（毫秒，真实时间）
+  const GHOST_MAX = 24;         // 同屏淡出实体上限（超出丢弃最旧）
+  const LOG_MAX = 400;          // 编年史条数上限
+  const ROSTER_DEAD_MAX = 24;   // 花名册保留的已灭部落条数（防千年史册撑爆侧栏）
+
+  const cv = $('map');
+  cv.width = C.mapW * C.tilePx;
+  cv.height = C.mapH * C.tilePx;
+  const ctx = cv.getContext('2d');
+  const off = document.createElement('canvas');   // 离屏地形缓存：地形色只依赖地型与林密度，随世界重建重画一次
+  off.width = cv.width;
+  off.height = cv.height;
+  const octx = off.getContext('2d');
+
+  let world = null;
+  let terrainDirty = true;
+  let running = false;
+  let lastTs = 0;
+  let acc = 0;                    // 欠账模拟时间（毫秒），按"年/秒"折算成滴答
+  const ghosts = [];              // 灭亡部落淡出实体 {name,color,x,y,pop,tiles,born}
+  const deadLog = [];             // 花名册用：已灭部落 {name,color,year}
+  const dispR = new Map();        // 据点标记显示半径（部落 id → px），逐帧向目标缓动
+
+  function hexToRgb(hex) {
+    const v = parseInt(hex.slice(1), 16);
+    return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+  }
+  function mixColor(a, b, t) {
+    const A = hexToRgb(a), B = hexToRgb(b);
+    const c = A.map((v, i) => Math.round(v + (B[i] - v) * t));
+    return 'rgb(' + c.join(',') + ')';
+  }
+  function colorOf(tile) {
+    switch (tile.type) {
+      case 'deepsea': return PAL.deepsea;
+      case 'shallowsea': return PAL.shallowsea;
+      case 'beach': return PAL.beach;
+      case 'plain': return PAL.plain;
+      case 'forest': return mixColor(PAL.forestSparse, PAL.forestDense, tile.forest);  // 密林更深
+      case 'mountain': return PAL.mountain;
+      default: return PAL.snow;
+    }
+  }
+  function markerR(pop) {         // 据点标记目标半径：随人口开方增长，封顶防遮天
+    return 2.6 + Math.min(6.4, Math.sqrt(Math.max(0, pop)) * 0.62);
+  }
+
+  function renderTerrain() {
+    const px = C.tilePx;
+    for (const tile of world.terrain.tiles) {
+      octx.fillStyle = colorOf(tile);
+      octx.fillRect(tile.x * px, tile.y * px, px, px);
+    }
+  }
+
+  /* ---- 每帧叠加第一层：领地罩色（现存 + 灭亡淡出）与相邻异色描边 ---- */
+  function drawOverlay(now) {
+    const px = C.tilePx;
+    const tiles = world.terrain.tiles;
+    const claims = world.claims;
+    const w = world.terrain.w, h = world.terrain.h;
+
+    ctx.globalAlpha = 0.38;                         // 领地罩色：部落色半透明
+    for (const tribe of world.tribes) {
+      ctx.fillStyle = tribe.color;
+      for (const idx of tribe.tiles) {
+        const t = tiles[idx];
+        ctx.fillRect(t.x * px, t.y * px, px, px);
+      }
+    }
+    for (let i = ghosts.length - 1; i >= 0; i--) {  // 灭亡部落：罩色随真实时间淡出
+      const g = ghosts[i];
+      const a = 1 - (now - g.born) / GHOST_MS;
+      if (a <= 0) { ghosts.splice(i, 1); continue; }
+      ctx.globalAlpha = 0.38 * a;
+      ctx.fillStyle = g.color;
+      for (const idx of g.tiles) {
+        const t = tiles[idx];
+        ctx.fillRect(t.x * px, t.y * px, px, px);
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    const colorById = {};                           // 相邻异色瓦片之间画描边线（无主/海侧也算异色）
+    for (const t of world.tribes) colorById[t.id] = t.color;
+    ctx.globalAlpha = 0.9;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const idx = y * w + x;
+        const c = claims[idx];
+        if (c === 0) continue;
+        ctx.fillStyle = colorById[c];
+        const X = x * px, Y = y * px;
+        if (y === 0 || claims[idx - w] !== c) ctx.fillRect(X, Y, px, 1);
+        if (y === h - 1 || claims[idx + w] !== c) ctx.fillRect(X, Y + px - 1, px, 1);
+        if (x === 0 || claims[idx - 1] !== c) ctx.fillRect(X, Y, 1, px);
+        if (x === w - 1 || claims[idx + 1] !== c) ctx.fillRect(X + px - 1, Y, 1, px);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /* ---- 每帧叠加第二层：据点标记（半径随人口缓动）与部落名 ---- */
+  function drawMarkers(now) {
+    const px = C.tilePx;
+    const L = [];                                   // 名字最后统一画，避免被后画的标记压住
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.font = '600 11px "Microsoft YaHei", sans-serif';
+    for (const tribe of world.tribes) {
+      const target = markerR(tribe.pop);
+      let r = dispR.has(tribe.id) ? dispR.get(tribe.id) : target;
+      r += (target - r) * 0.18;                     // 画面随年份平滑过渡：半径渐变
+      dispR.set(tribe.id, r);
+      const cx = tribe.x * px + px / 2, cy = tribe.y * px + px / 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = tribe.color;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(10,14,19,0.85)';
+      ctx.stroke();
+      L.push([tribe.name, cx, Math.max(10, cy - r - 3), 1]);
+    }
+    for (const g of ghosts) {                       // 灭亡部落据点余痕：标记与名字一起淡出
+      const a = Math.max(0, 1 - (now - g.born) / GHOST_MS);
+      if (a <= 0) continue;
+      const cx = g.x * px + px / 2, cy = g.y * px + px / 2;
+      const r = markerR(g.pop);
+      ctx.globalAlpha = a;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = g.color;
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(10,14,19,0.85)';
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      L.push([g.name, cx, Math.max(10, cy - r - 3), a]);
+    }
+    for (const [name, x, y, a] of L) {
+      ctx.globalAlpha = a;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(10,14,19,0.85)';
+      ctx.strokeText(name, x, y);
+      ctx.fillStyle = '#f2f6fa';
+      ctx.fillText(name, x, y);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function draw(now) {
+    if (!world) return;
+    if (terrainDirty) { renderTerrain(); terrainDirty = false; }
+    ctx.drawImage(off, 0, 0);
+    drawOverlay(now);
+    drawMarkers(now);
+  }
+
+  /* ---- 编年史：最新在底部并自动滚动，按事件类型着色，上限 LOG_MAX 条 ---- */
+  function logLine(ev) {
+    const el = $('log');
+    const div = document.createElement('div');
+    div.className = 'logline';
+    const b = document.createElement('b');
+    b.textContent = '第 ' + ev.year + ' 年';
+    const sep = document.createElement('span');
+    sep.className = 'sep';
+    sep.textContent = '·';
+    const txt = document.createElement('span');
+    txt.style.color = TYPE_COLORS[ev.type] || '#93a3b6';
+    txt.textContent = ev.text;
+    div.appendChild(b);
+    div.appendChild(sep);
+    div.appendChild(txt);
+    el.appendChild(div);
+    while (el.children.length > LOG_MAX) el.removeChild(el.firstChild);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  /* ---- 花名册：色点+名字+人口；灭亡置灰（保留最近 ROSTER_DEAD_MAX 条） ---- */
+  function renderRoster() {
+    const box = $('roster');
+    box.innerHTML = '';
+    const add = (name, color, text, dead, title) => {
+      const chip = document.createElement('span');
+      chip.className = 'chip' + (dead ? ' dead' : '');
+      chip.title = title;
+      const i = document.createElement('i');
+      i.style.background = dead ? '#4a5563' : color;
+      chip.appendChild(i);
+      chip.appendChild(document.createTextNode(text));
+      box.appendChild(chip);
+    };
+    for (const t of world.tribes) {
+      add(t.name, t.color, t.name + ' ' + Math.round(t.pop) + '人', false,
+        t.name + '：人口 ' + Math.round(t.pop) + '，领地 ' + t.tiles.length + ' 格');
+    }
+    const dead = deadLog.slice(-ROSTER_DEAD_MAX).reverse();
+    for (const d of dead) {
+      add(d.name, d.color, d.name + ' 第' + d.year + '年灭', true,
+        d.name + '：于第 ' + d.year + ' 年从沙盘除名');
+    }
+  }
+
+  function updateHUD() {
+    let pop = 0, terr = 0;
+    for (const t of world.tribes) { pop += t.pop; terr += t.tiles.length; }
+    $('year').textContent = String(world.year);
+    $('tribes').textContent = String(world.tribes.length);
+    $('pop').textContent = String(Math.round(pop));
+    $('terr').textContent = String(terr);
+    renderRoster();
+  }
+
+  function buildWorld() {         // 重置：用种子框里的种子重开（同种子同历史）
+    const raw = Number($('seed').value);
+    const seed = Number.isFinite(raw) ? Math.floor(raw) : C.seed;
+    $('seed').value = String(seed);
+    world = S.createWorld(seed);
+    terrainDirty = true;
+    ghosts.length = 0;
+    deadLog.length = 0;
+    dispR.clear();
+    acc = 0;
+    $('log').innerHTML = '';
+    const st = world.terrain.stats;
+    logLine({
+      year: world.year, type: 'note',
+      text: '世界诞生：种子 ' + seed + '，陆地占比 ' + (st.landRatio * 100).toFixed(1)
+        + '%（森林占陆地 ' + ((st.counts.forest || 0) / st.land * 100).toFixed(1)
+        + '%，山地 ' + (st.counts.mountain || 0) + ' 格，雪峰 ' + (st.counts.snow || 0) + ' 格）',
+    });
+    for (const ev of world.events) logLine(ev);   // 开局的 founded 事件正序入编年史
+    updateHUD();
+  }
+
+  function doTick() {             // 推进一年：先快照再 tick，逮住本年除名的部落做淡出与置灰
+    const pre = world.tribes.map(t => ({
+      name: t.name, color: t.color, x: t.x, y: t.y, pop: t.pop, tiles: t.tiles.slice(),
+    }));
+    const ids = world.tribes.map(t => t.id);
+    const fresh = world.tick();
+    const alive = new Set(world.tribes.map(t => t.id));
+    for (let i = 0; i < ids.length; i++) {
+      if (alive.has(ids[i])) continue;
+      ghosts.push({
+        name: pre[i].name, color: pre[i].color, x: pre[i].x, y: pre[i].y,
+        pop: pre[i].pop, tiles: pre[i].tiles, born: performance.now(),
+      });
+      if (ghosts.length > GHOST_MAX) ghosts.shift();
+      deadLog.push({ name: pre[i].name, color: pre[i].color, year: world.year });
+    }
+    for (const ev of fresh) logLine(ev);
+    updateHUD();
+  }
+
+  /* ---- 主循环：rAF + 累加器，按速度档"年/秒"换算滴答；暂停不推进但保持渲染 ----
+     pump 为唯一循环本体：rAF 每帧调用；另设 200ms 心跳兜底——标签页被浏览器节流
+     （后台/被遮挡时 rAF 停摆）仍按同一累加器推进，两者共用 acc 不会重复滴答。 */
+  function pump(now) {
+    const dt = Math.min(250, now - lastTs);       // 后台切回防大步进
+    lastTs = now;
+    if (running && world) {
+      const yps = Number($('speed').value) || 1;  // 速度档 = 每秒推进的年数
+      acc += dt;
+      const stepMs = 1000 / yps;
+      let guard = 0;
+      while (acc >= stepMs && guard < 120) { acc -= stepMs; doTick(); guard++; }
+      if (guard >= 120) acc = 0;                  // 追不上就丢弃欠账，防死亡螺旋
+    } else {
+      acc = 0;
+    }
+    draw(now);
+  }
+  function frame(ts) {
+    requestAnimationFrame(frame);
+    pump(ts);
+  }
+  setInterval(() => pump(performance.now()), 200);   // 兜底心跳（可见时 rAF 消费欠账，心跳空转）
+
+  function setRunning(run) {
+    running = run;
+    $('btnToggle').textContent = running ? '暂停' : '开始';
+  }
+
+  $('btnToggle').addEventListener('click', () => setRunning(!running));
+  $('btnReset').addEventListener('click', () => buildWorld());  // 用当前种子重开
+  $('seed').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') buildWorld();
+  });
+
+  /* ---- 悬停 tooltip：瓦片地类/资源 与 所属部落/人口 ---- */
+  const tip = $('tip');
+  const stage = $('stage');
+  cv.addEventListener('mousemove', (e) => {
+    if (!world) return;
+    const rect = cv.getBoundingClientRect();      // 画布可能被 CSS 缩放：先折算回画布坐标
+    const mx = (e.clientX - rect.left) * (cv.width / rect.width);
+    const my = (e.clientY - rect.top) * (cv.height / rect.height);
+    const x = Math.floor(mx / C.tilePx), y = Math.floor(my / C.tilePx);
+    if (x < 0 || y < 0 || x >= world.terrain.w || y >= world.terrain.h) {
+      tip.style.display = 'none';
+      return;
+    }
+    const idx = y * world.terrain.w + x;
+    const t = world.terrain.tiles[idx];
+    const c = world.claims[idx];
+    let owner = '无主';
+    if (c !== 0) {
+      const tr = world.tribes.find(o => o.id === c);
+      if (tr) owner = tr.name + '（人口 ' + Math.round(tr.pop) + '）'
+        + (tr.x === x && tr.y === y ? ' · 据点' : '');
+    }
+    tip.textContent = '第 ' + x + ',' + y + ' 格 · ' + S.TERRAIN_NAMES[t.type]
+      + ' · 食物 ' + t.res.food.toFixed(2) + ' · 木材 ' + t.res.wood.toFixed(2)
+      + ' · 石料 ' + t.res.stone.toFixed(2) + ' · 肥力 ' + Math.round(t.fert * 100) + '%'
+      + ' · ' + owner;
+    const sr = stage.getBoundingClientRect();
+    let lx = e.clientX - sr.left + 14, ly = e.clientY - sr.top + 18;
+    if (lx + tip.offsetWidth > sr.width - 8) lx = e.clientX - sr.left - tip.offsetWidth - 12;
+    if (ly + tip.offsetHeight > sr.height - 8) ly = e.clientY - sr.top - tip.offsetHeight - 12;
+    tip.style.left = Math.max(4, lx) + 'px';
+    tip.style.top = Math.max(4, ly) + 'px';
+    tip.style.display = 'block';
+  });
+  cv.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+
+  /* ---- 图例 ---- */
+  (function buildLegend() {
+    const box = $('legend');
+    const items = [
+      ['deepsea', PAL.deepsea],
+      ['shallowsea', PAL.shallowsea],
+      ['beach', PAL.beach],
+      ['plain', PAL.plain],
+      ['forest', mixColor(PAL.forestSparse, PAL.forestDense, 0.5)],
+      ['mountain', PAL.mountain],
+      ['snow', PAL.snow],
+    ];
+    for (const [type, color] of items) {
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      const sw = document.createElement('i');
+      sw.style.background = color;
+      chip.appendChild(sw);
+      chip.appendChild(document.createTextNode(S.TERRAIN_NAMES[type]));
+      box.appendChild(chip);
+    }
+  })();
+
+  buildWorld();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
