@@ -7,7 +7,7 @@
    覆盖（对应阶段五"平衡 + 测试 + 文档"任务书）：
    A. SIM-CORE 可抽取：标记恰一次、顺序正确、求值后 IslandSim 挂载齐全；
       核心区剥离注释与字符串后无任何 DOM/BOM/网络引用
-   B. CONFIG 契约：键无 undefined、全为有限数字、各阶段契约键在位（防改名/删除）
+   B. CONFIG 契约：键无 undefined、值均为有限数字或布尔开关、各阶段契约键在位（防改名/删除）
    C. 地形健全：结构一致、landRatio ∈ [0.18, 0.50]、十种子地型并集覆盖七类、
       资源/肥力取值范围、海格资源恒零
    D. 确定性：同种子两次运行 2000 年——全程事件流逐位一致 + 终局世界哈希一致；
@@ -130,7 +130,9 @@ const C = IS.CONFIG;
   for (const k of keys) {
     ok(C[k] !== undefined, 'B2 CONFIG.' + k + ' 非 undefined');
     if (C[k] !== undefined) {
-      ok(typeof C[k] === 'number' && Number.isFinite(C[k]), 'B3 CONFIG.' + k + ' 是有限数字');
+      const v = C[k];
+      ok(typeof v === 'number' && Number.isFinite(v)
+        || typeof v === 'boolean', 'B3 CONFIG.' + k + ' 是有限数字或布尔开关');
     }
   }
   const CONTRACT_KEYS = [        // 接口契约键（阶段一~三确立，不许改名/删除）
@@ -401,6 +403,66 @@ banner('H. 建世契约杂项');
   const fresh0 = w0.tick();
   ok(Array.isArray(fresh0), 'H5 tick() 返回数组');
   eq(w0.year, C.startYear + 1, 'H6 tick() 后年份推进一年');
+}
+
+/* ================= I. 部落性格与世界设定 ================= */
+banner('I. 部落性格与世界设定');
+{
+  const ISEEDS = [20261105, 42, 99, 1, 7, 123, 777, 2024, 314159, 9527];
+  const LEGAL = ['hawk', 'dove', 'expand', 'neutral'];
+
+  let legalTribe = true;
+  const kinds = new Set();
+  for (const sd of ISEEDS) {
+    const w = IS.createWorld(sd);
+    for (const t of w.tribes) {
+      if (!LEGAL.includes(t.personality)) legalTribe = false;
+      kinds.add(t.personality);
+    }
+  }
+  ok(legalTribe, 'I1 10 种子开局每部落族性合法（hawk/dove/expand）');
+  ok(kinds.size >= 2, 'I2 10 种子开局族性非退化（并集 ≥ 2 种，实际 ' + kinds.size + ' 种）');
+
+  const st = { initialTribes: 5, conflictRateMul: 2.5, allowVoluntaryMerge: false, personalityOn: true };
+  const a = IS.createWorld(777, st), b = IS.createWorld(777, st);
+  let same = true;
+  for (let i = 0; i < 500 && same; i++) {
+    if (JSON.stringify(a.tick()) !== JSON.stringify(b.tick())) same = false;
+  }
+  ok(same, 'I3 同种子同设定两次运行事件流逐位一致（500 年）');
+
+  const wz = IS.createWorld(20261105, { conflictRateMul: 0 });
+  let zc = 0;
+  for (let i = 0; i < 600; i++) zc += wz.tick().filter(e => e.type === 'conflict').length;
+  eq(zc, 0, 'I4 好战度 0% 时 600 年零冲突事件');
+
+  const wStd = IS.createWorld(20261105);
+  let sc = 0;
+  for (let i = 0; i < 600; i++) sc += wStd.tick().filter(e => e.type === 'conflict').length;
+  const wh = IS.createWorld(20261105, { conflictRateMul: 3 });
+  let hc = 0;
+  for (let i = 0; i < 600; i++) hc += wh.tick().filter(e => e.type === 'conflict').length;
+  ok(hc > 0, 'I5 好战度 300% 时战火如期而至（600 年冲突 ' + hc + ' 次）');
+  console.log('  种子 20261105 前 600 年冲突：标准 ' + sc + ' 次 vs 好战度 300% ' + hc + ' 次（倍率 ×3 档）');
+
+  const wn = IS.createWorld(42, { allowVoluntaryMerge: false });
+  let vMerge = 0;
+  for (let i = 0; i < 1200; i++) vMerge += wn.tick().filter(e => e.type === 'merge' && e.text.includes('自愿')).length;
+  eq(vMerge, 0, 'I6 关闭自愿合并后 1200 年零"自愿并入"事件');
+
+  const wd = IS.createWorld(99);
+  let vm = 0;
+  for (let i = 0; i < 2000; i++) vm += wd.tick().filter(e => e.type === 'merge' && e.text.includes('自愿')).length;
+  ok(vm >= 1, 'I7 默认设定 2000 年存在自愿并入（' + vm + ' 次）');
+
+  const wp = IS.createWorld(20261105, { personalityOn: false });
+  ok(wp.tribes.every(t => t.personality === 'neutral'), 'I8 关闭性格则人人中性');
+  ok(wp.events.every(e => !e.text.includes('族性')), 'I8b 关闭性格后事件文本无"族性"标签');
+
+  eq(IS.createWorld(1, { initialTribes: 7 }).tribes.length, 7, 'I9 设定开局部落数 7 生效');
+  eq(IS.createWorld(20261105).settings, null, 'I9b 不传 settings 时 world.settings 为 null（回落 CONFIG）');
+  const wf = IS.createWorld(20261105);
+  ok(wf.events.some(e => e.type === 'founded' && e.text.includes('族性')), 'I10 默认开局 founded 事件标注族性');
 }
 
 /* ================= 汇总 ================= */

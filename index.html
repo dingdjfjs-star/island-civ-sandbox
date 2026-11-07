@@ -52,6 +52,10 @@
     border: 1px solid #334052; padding: 4px 8px; font: inherit;
   }
   input#seed { width: 110px; }
+  input#numTribes { width: 44px; padding: 4px 6px; }
+  input#aggr { width: 92px; padding: 0; accent-color: #d8a657; }
+  #aggrVal { color: #e5c88a; font-size: 12px; min-width: 34px; }
+  .row.set { margin-top: 2px; padding-top: 8px; border-top: 1px dashed #232d3a; }
   .lbl { display: inline-flex; align-items: center; gap: 6px; color: #8fa0b4; font-size: 13px; }
   .stat { margin: 2px 0 10px; color: #8fa0b4; font-size: 13px; }
   .stat b { color: #e8eef5; font-weight: 600; }
@@ -97,7 +101,12 @@
       </div>
       <div class="row">
         <label class="lbl">种子 <input id="seed" type="number" value="20261105"></label>
-        <span class="hint">同种子同历史</span>
+        <span class="hint">同种子同设定，同历史</span>
+      </div>
+      <div class="row set">
+        <label class="lbl" title="开局部落数量（2~8）。设定改动在点「重置」后生效">部落 <input id="numTribes" type="number" min="2" max="8" step="1" value="4"></label>
+        <label class="lbl" title="开战频率倍率：0% 永不开战，100% 标准，越高战火越勤。重置后生效">好战度 <input id="aggr" type="range" min="0" max="300" step="10" value="100"><b id="aggrVal">100%</b></label>
+        <label class="lbl" title="接壤多年太平后，小族可自愿并入大族。重置后生效"><input id="peaceMerge" type="checkbox" checked> 允许自愿合并</label>
       </div>
       <div class="stat">年份 <b id="year">1</b><span class="sep">·</span>部落 <b id="tribes">0</b><span class="sep">·</span>人口 <b id="pop">0</b><span class="sep">·</span>领地 <b id="terr">0</b> 格</div>
       <div id="legend"></div>
@@ -226,6 +235,19 @@ const CONFIG = {
   splitClaimRadius: 8,       // 分支落址后圈领地的最大半径
   splitSiteFertMin: 0.45,    // 裂土分家：分支据点（在母部落领地内挑）的肥力下限
   splitMinTiles: 24,         // 裂土分家：母部落至少拥有的领地格数（太穷不许分）
+
+  // —— 部落性格与世界设定（新增；只增不改；settings 传入时优先于这些默认值）——
+  personalityOn: true,       // 是否启用部落性格（好战/温和/扩张；关闭则人人中性，行为回到无性格版）
+  conflictRateMul: 1,        // 世界好战度倍率：所有开战概率再乘此系数（0=永不打架，2=战火加倍）
+  allowVoluntaryMerge: true, // 是否允许"接壤多年太平→小族自愿并入大族"
+  hawkFrac: 0.30,            // 开局性格抽签：好战占比（走种子流，同 seed 同性格布局）
+  doveFrac: 0.30,            // 温和占比（剩下的即扩张性格）
+  aggrHawk: 2.4,             // 好战部落的开战倾向倍率（双边均值后进开战公式）
+  aggrDove: 0.35,            // 温和部落的开战倾向倍率
+  aggrExpand: 1.2,           // 扩张部落的开战倾向倍率
+  claimMulExpand: 2,         // 扩张部落每年主张新领地的配额倍率（手长，圈地快）
+  mergeWillHawk: 0.5,        // 好战部落"自愿并入他人"的人口门槛倍率（打折=更不肯低头）
+  mergeWillDove: 1.6,        // 温和部落"自愿并入他人"的人口门槛倍率（放大=更容易认亲合族）
 };
 
 /* ================= 地形类型中文名（渲染图例与日志用，查表数据非参数） ================= */
@@ -294,6 +316,27 @@ function variantTribeColor(world, parentHex) {    // 分裂继承变体色：RGB
     if (used.every(u => colorDist(hexRgb(v), hexRgb(u)) >= CONFIG.tribeColorDist)) return v;
   }
   return pickTribeColor(world, world.nextTribeId);
+}
+
+/* ================= 部落性格（查表数据非参数；占比/倍率在 CONFIG） =================
+   好战：爱打架，不肯轻易低头并入他族；温和：不爱打架，弱小时容易认亲合族；
+   扩张：圈地手长，略好斗；中性：关闭性格时的人人如此（行为与旧版一致）。 */
+const PERSONALITIES = {
+  hawk:   { tag: '好战', aggr: () => CONFIG.aggrHawk,   mergeWill: () => CONFIG.mergeWillHawk },
+  dove:   { tag: '温和', aggr: () => CONFIG.aggrDove,   mergeWill: () => CONFIG.mergeWillDove },
+  expand: { tag: '扩张', aggr: () => CONFIG.aggrExpand, mergeWill: () => 1 },
+  neutral:{ tag: '',    aggr: () => 1,                  mergeWill: () => 1 },
+};
+function worldSetting(world, key) {               // 世界设定优先于 CONFIG 默认（UI 经 settings 传入）
+  const s = world.settings;
+  return (s && Object.prototype.hasOwnProperty.call(s, key)) ? s[key] : CONFIG[key];
+}
+function rollPersonality(world) {                 // 开局性格抽签：消耗固定次数种子流，同 seed 同布局
+  if (!worldSetting(world, 'personalityOn')) return 'neutral';
+  const r = world.rand();
+  if (r < CONFIG.hawkFrac) return 'hawk';
+  if (r < CONFIG.hawkFrac + CONFIG.doveFrac) return 'dove';
+  return 'expand';
 }
 
 /* ================= 种子化 PRNG：mulberry32 ================= */
@@ -483,6 +526,7 @@ function makeTribe(world, baseIdx, id, rand, usedNames) {
     stone: 0,                                     // 石料库存
     tiles: [],                                    // 领地：已主张瓦片索引（主张顺序）
     lastFamine: -9999,                            // 上次饥荒事件年份（事件节流）
+    personality: rollPersonality(world),          // 族性（好战/温和/扩张/中性），分裂时承继
   };
   world.tribes.push(tribe);
   claimAround(world, tribe, Math.ceil(pop * CONFIG.popPerTile), CONFIG.initClaimRadius);
@@ -490,7 +534,7 @@ function makeTribe(world, baseIdx, id, rand, usedNames) {
 }
 
 /* ================= 世界生成 ================= */
-function createWorld(seed) {
+function createWorld(seed, settings) {
   const s = (typeof seed === 'number' && Number.isFinite(seed)) ? Math.floor(seed) : CONFIG.seed;
   const rand = mulberry32(s >>> 0);
   const noiseH = createPerlin(rand);              // 主地形噪声（第一组置换表）
@@ -560,6 +604,7 @@ function createWorld(seed) {
   const terrain = { w: W, h: H, seaLevel, tiles, stats, landIdxs };
   const world = {
     seed: s,
+    settings: (settings && typeof settings === 'object') ? settings : null,   // 世界设定（缺省回落 CONFIG）
     year: CONFIG.startYear,
     tribes: [],                                   // 存活部落数组（按 id 升序，tick 固定顺序更新）
     events: [],                                   // 事件历史，元素形如 {year, type, text}
@@ -574,7 +619,7 @@ function createWorld(seed) {
 
   // 部落诞生：评分选址 → 依次建部（名称/人口走种子流，保持可复现），发 founded 事件
   const usedNames = new Set();
-  const sites = pickSites(terrain, CONFIG.initialTribes);
+  const sites = pickSites(terrain, worldSetting(world, 'initialTribes'));
   const founded = [];
   for (let k = 0; k < sites.length; k++) {
     const tribe = makeTribe(world, sites[k], k + 1, rand, usedNames);
@@ -583,7 +628,8 @@ function createWorld(seed) {
       year: world.year,
       type: 'founded',
       text: tribe.name + '在孤岛' + dirName(t.x - W / 2, t.y - H / 2) + '方的'
-        + TERRAIN_NAMES[t.type] + '地带落地生根，人口 ' + Math.round(tribe.pop),
+        + TERRAIN_NAMES[t.type] + '地带落地生根，人口 ' + Math.round(tribe.pop)
+        + (PERSONALITIES[tribe.personality].tag ? '，族性' + PERSONALITIES[tribe.personality].tag : ''),
     });
   }
   pushEvents(world.events, founded);
@@ -777,7 +823,8 @@ function tryMigrate(world, tribe, fresh, pre) {
 function expandTribe(world, tribe) {
   const want = Math.ceil(tribe.pop * CONFIG.popPerTile);
   if (tribe.tiles.length >= want) return;
-  let quota = Math.min(CONFIG.claimPerYearMax,
+  const claimMul = tribe.personality === 'expand' ? CONFIG.claimMulExpand : 1;   // 扩张族圈地手长
+  let quota = Math.min(CONFIG.claimPerYearMax * claimMul,
     Math.max(1, Math.ceil((want - tribe.tiles.length) * CONFIG.claimCatchFrac)));
   const tiles = world.terrain.tiles;
   const { w, h } = world.terrain;
@@ -965,22 +1012,26 @@ function resolveInteractions(world, fresh) {
     if (!rel.contact) continue;
     const A = byId[pairs[pi][0]], B = byId[pairs[pi][1]];
     if (!A || !B || A.dead || B.dead) continue;   // 本年已消亡/被并：跳过
-    // —— 和平路线：接壤多年无冲突，且一方人口明显偏小 → 自愿并入 ——
-    if (year - Math.max(rel.contactYear, rel.lastConflict) >= CONFIG.peaceMergeGap) {
+    // —— 和平路线：接壤多年无冲突，且一方人口明显偏小 → 自愿并入（小族的族性决定低头门槛）——
+    if (worldSetting(world, 'allowVoluntaryMerge')
+      && year - Math.max(rel.contactYear, rel.lastConflict) >= CONFIG.peaceMergeGap) {
       const small = A.pop <= B.pop ? A : B;
       const big = small === A ? B : A;
-      if (small.pop > CONFIG.extinctPop && small.pop <= big.pop * CONFIG.peaceMergePopFrac) {
+      const will = PERSONALITIES[small.personality].mergeWill();
+      if (small.pop > CONFIG.extinctPop && small.pop <= big.pop * CONFIG.peaceMergePopFrac * will) {
         absorbTribe(world, big, small, fresh, true);
         continue;
       }
     }
     if (year < rel.truceUntil) continue;          // 休战冷却中
-    // —— 冲突判定：基础概率 × 拥挤度（人/格 相对 popPerTile）× 实力差加成 ——
+    // —— 冲突判定：基础概率 × 拥挤度（人/格 相对 popPerTile）× 实力差加成 × 双边族性 × 世界好战度 ——
     const press = Math.max(A.pop / Math.max(1, A.tiles.length), B.pop / Math.max(1, B.tiles.length))
       / CONFIG.popPerTile;
     const pLo = Math.min(A.pop, B.pop), pHi = Math.max(A.pop, B.pop);
     const edge = Math.min(CONFIG.conflictEdgeCap, pHi / Math.max(1, pLo));
-    if (world.rand() >= CONFIG.conflictBase * press * edge) continue;   // 今年相安无事
+    const aggr = (PERSONALITIES[A.personality].aggr() + PERSONALITIES[B.personality].aggr()) / 2
+      * worldSetting(world, 'conflictRateMul');
+    if (world.rand() >= CONFIG.conflictBase * press * edge * aggr) continue;   // 今年相安无事
     // —— 开战：双方掉人口，败方（人口少的一方）加倍放血 ——
     const weak = A.pop <= B.pop ? A : B;
     const strong = weak === A ? B : A;
@@ -1103,6 +1154,7 @@ function resolveSplits(world, fresh) {
       stone: Math.min(CONFIG.stockCapStone, tribe.stone * CONFIG.splitPopFrac),
       tiles: [],
       lastFamine: -9999,
+      personality: tribe.personality,             // 分家承继母族性格（家风不改）
     };
     tribe.pop = prePop - child.pop;
     tribe.food -= child.food;
@@ -1147,7 +1199,7 @@ function tickWorld(world) {
 }
 
 /* ================= 导出 ================= */
-globalThis.IslandSim = { CONFIG, TERRAIN_NAMES, mulberry32, createPerlin, fbm, createWorld };
+globalThis.IslandSim = { CONFIG, TERRAIN_NAMES, PERSONALITIES, mulberry32, createPerlin, fbm, createWorld };
 /* ===== SIM-CORE-END ===== */
 </script>
 
@@ -1379,8 +1431,9 @@ globalThis.IslandSim = { CONFIG, TERRAIN_NAMES, mulberry32, createPerlin, fbm, c
       box.appendChild(chip);
     };
     for (const t of world.tribes) {
-      add(t.name, t.color, t.name + ' ' + Math.round(t.pop) + '人', false,
-        t.name + '：人口 ' + Math.round(t.pop) + '，领地 ' + t.tiles.length + ' 格');
+      const pt = PERSONALITIES_TAG(t.personality);
+      add(t.name, t.color, (pt ? pt + '·' : '') + t.name + ' ' + Math.round(t.pop) + '人', false,
+        t.name + '：族性 ' + (pt || '中性') + '；人口 ' + Math.round(t.pop) + '，领地 ' + t.tiles.length + ' 格');
     }
     const dead = deadLog.slice(-ROSTER_DEAD_MAX).reverse();
     for (const d of dead) {
@@ -1399,11 +1452,29 @@ globalThis.IslandSim = { CONFIG, TERRAIN_NAMES, mulberry32, createPerlin, fbm, c
     renderRoster();
   }
 
-  function buildWorld() {         // 重置：用种子框里的种子重开（同种子同历史）
+  function PERSONALITIES_TAG(p) {   // 性格标签（S.PERSONALITIES 查表；未知/缺省返回空）
+    const m = S.PERSONALITIES && S.PERSONALITIES[p];
+    return m ? m.tag : '';
+  }
+
+  function readSettings() {       // 读世界设定面板（重置后生效；越界拉回）
+    const nt = Number($('numTribes').value);
+    const tribes = Number.isFinite(nt) ? Math.max(2, Math.min(8, Math.round(nt))) : C.initialTribes;
+    $('numTribes').value = String(tribes);
+    const ag = Number($('aggr').value);
+    return {
+      initialTribes: tribes,
+      conflictRateMul: Number.isFinite(ag) ? Math.max(0, ag) / 100 : 1,
+      allowVoluntaryMerge: $('peaceMerge').checked,
+      personalityOn: true,
+    };
+  }
+
+  function buildWorld() {         // 重置：用种子框里的种子 + 世界设定重开（同种子同设定，同历史）
     const raw = Number($('seed').value);
     const seed = Number.isFinite(raw) ? Math.floor(raw) : C.seed;
     $('seed').value = String(seed);
-    world = S.createWorld(seed);
+    world = S.createWorld(seed, readSettings());
     terrainDirty = true;
     ghosts.length = 0;
     deadLog.length = 0;
@@ -1471,7 +1542,8 @@ globalThis.IslandSim = { CONFIG, TERRAIN_NAMES, mulberry32, createPerlin, fbm, c
   }
 
   $('btnToggle').addEventListener('click', () => setRunning(!running));
-  $('btnReset').addEventListener('click', () => buildWorld());  // 用当前种子重开
+  $('btnReset').addEventListener('click', () => buildWorld());  // 用当前种子与设定重开
+  $('aggr').addEventListener('input', () => { $('aggrVal').textContent = $('aggr').value + '%'; });
   $('seed').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') buildWorld();
   });
